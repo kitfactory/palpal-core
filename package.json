@@ -1,0 +1,34 @@
+{
+  "name": "pal-core",
+  "version": "0.1.0",
+  "description": "Agents SDK compatible TypeScript wrapper with SafetyAgent, Skills, MCP and Chat Completions providers.",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src/**/*"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node dist/test/providers.test.js && node dist/test/mcp.test.js && node dist/test/errors.test.js && node dist/test/runner.test.js && node dist/test/skills.test.js",
+    "pack:check": "npm pack --dry-run"
+  },
+  "keywords": [
+    "agents",
+    "openai",
+    "mcp",
+    "skills",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "typescript": "^5.9.3"
+  }
+}

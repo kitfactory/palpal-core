@@ -1,0 +1,52 @@
+﻿# plan.md（必ず書く：最新版）
+# current
+- [x] 改善1: `run` 本流化（Agentのtool call出力を逐次処理）を実装する
+- [x] 改善1テスト: `run` が `extensions.toolCalls` なしで tool call ループを処理できることを実装直後に検証する
+- [x] 改善2: SafetyAgent入力文脈を強化（tool schema / skill summary / mcp capability + risk）する
+- [x] 改善2テスト: SafetyAgentに渡る判定入力が期待構造を満たすことを実装直後に検証する
+- [x] 改善3: SafetyAgent出力を厳格化（構造化出力 contract + fail-closed）する
+- [x] 改善3テスト: 不正出力時に必ず停止し、正規出力時にのみ続行することを実装直後に検証する
+- [x] 改善4: 承認APIを簡素化（`approveAndResume` などの1段API）する
+- [x] 改善4テスト: 承認->再開の正常系/二重送信/期限切れを実装直後に検証する
+- [x] 改善5: Guardrails責務テンプレートを実装（input/output静的ルール、tool実行はSafetyAgent主判定）する
+- [x] 改善5テスト: 責務分離どおりに deny/allow が発火することを実装直後に検証する
+- [x] 改善6: エラー体系を一本化（`AGENTS-E-*`）し、分類コードを整理する
+- [x] 改善6テスト: 主要失敗経路でエラーコード互換が保たれることを実装直後に検証する
+- [x] 最終統合テスト: MCP + Skills + SafetyAgent + Guardrails + Human approval を1シナリオで検証する
+- [x] concept/spec/architecture/plan の整合を再確認し、変更差分を反映する
+
+# future
+- 永続Store実装（Redis/DB）とマルチプロセス承認管理
+- Policy Profile（strict/balanced/fast）の詳細チューニング
+- Skillフォーマットのバージョニングと互換レイヤー
+- doctor/status/debug の診断I/F拡張
+
+# archive
+- [x] concept/spec/architecture の整合を再確認し、MVP（UC-1/UC-2/UC-4）へ固定する
+- [x] spec.md に ERR-ID と戻り型拡張（RunResult optional + extensions）を Given/When/Then で追記する
+- [x] spec.md に Provider 環境変数（OpenAI/Ollama/LM Studio/Gemini/Anthropic/OpenRouter）を反映する
+- [x] npmライブラリの雛形（package exports / tsconfig / test runner）を実装する
+- [x] 雛形のビルド確認（empty smoke）を実施する
+- [x] Agents SDK互換Facade（`Agent`/`run`/`tool`/`hostedMcpTool`/`createRunner`）を実装する
+- [x] 互換Facadeの型互換チェック（既存呼び出しコード相当）を実装する
+- [x] SafetyGate（SafetyAgent連携 + fail-closed）を実装する
+- [x] SafetyGateの単体テスト（allow/deny/needs_human/capability抽出）を実装・実行する
+- [x] ApprovalController（`getPendingApprovals`/`submitApproval`/`resumeRun`）を実装する
+- [x] ApprovalControllerの単体テスト（状態遷移・トークン利用）を実装・実行する
+- [x] SkillRegistry（`loadSkills`/`toTools`）を実装する
+- [x] SkillRegistryの単体テスト（SKILL.mdパース、Tool化）を実装・実行する
+- [x] SkillMetadataExtractor（`listSkills`/`describeSkill`/`toIntrospectionTools`）を実装する
+- [x] Skillメタ情報の単体テスト（summary/full、`skill.list`/`skill.describe`）を実装・実行する
+- [x] McpGateway（register/introspect/call）を実装する
+- [x] McpGatewayの統合テスト（登録/内省/呼び出し）を実装・実行する
+- [x] Agent Capability Extraction（runner.run時にAgentからSkill/Tool/MCPを自動抽出）を実装する
+- [x] Agent Capability Extractionテスト（Capability Snapshot連携）を実装・実行する
+- [x] CompatModelProvider（OpenAI互換Chat Completions）を実装する
+- [x] CompatModelProviderの統合テスト（正常系/設定不足/timeout既定値）を実装・実行する
+- [x] E2Eシナリオ（MCP + Skill + Human approval + resume）を実装・実行する
+- [x] MCP/Skills/SafetyAgent/Compat Providerを含むコンセプト案を作成する
+- [x] Agents SDK互換I/F維持の方針をconceptへ反映する
+- [x] 非破壊安全性を前提にした設計方針を統合する
+- [x] Skillメタ情報（概要/サンプル/詳細）のI/F方針を設計へ反映する
+- [x] architecture の主要レイヤーと依存方向を確定する
+- [x] 主要クラスI/FとOpenAI Agents SDK比較をarchitectureへ反映する
