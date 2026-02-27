@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   Agent,
   AgentsError,
+  ModelSafetyAgent,
   SafetyAgent,
   Tool,
   createGuardrailsTemplate,
@@ -52,6 +53,80 @@ test("runner denies tool call when SafetyAgent returns deny", async () => {
       return true;
     }
   );
+});
+
+test("runner executes tool calls when SafetyAgent is not configured", async () => {
+  const runner = createRunner();
+  const echoTool = tool({
+    name: "echo",
+    description: "echo",
+    execute: async (args) => args
+  });
+  const agent = new Agent({
+    name: "no-safety-agent",
+    instructions: "test",
+    tools: [echoTool]
+  });
+
+  const result = await runner.run(agent, "hello", {
+    extensions: {
+      toolCalls: [{ toolName: "echo", args: { text: "hello" } }]
+    }
+  });
+
+  assert.equal(result.tool_calls.length, 1);
+  assert.equal(result.tool_calls[0].tool_name, "echo");
+});
+
+test("hostedMcpTool requires human approval by default even without SafetyAgent", async () => {
+  const runner = createRunner();
+  const mcpTool = hostedMcpTool({
+    id: "workspace",
+    url: "http://localhost:5001",
+    callTool: async () => ({ ok: true })
+  });
+  const agent = new Agent({
+    name: "mcp-default-approval",
+    instructions: "test",
+    tools: [mcpTool]
+  });
+
+  const interrupted = await runner.run(agent, "read", {
+    extensions: {
+      toolCalls: [{ toolName: mcpTool.name, args: { toolName: "read_file", args: {} } }]
+    }
+  });
+
+  assert.equal(interrupted.interruptions?.length, 1);
+  assert.equal(interrupted.tool_calls.length, 0);
+});
+
+test("hostedMcpTool can bypass approval when requireApproval is false", async () => {
+  const runner = createRunner();
+  const mcpTool = hostedMcpTool(
+    {
+      id: "workspace",
+      url: "http://localhost:5002",
+      callTool: async () => ({ ok: true })
+    },
+    {
+      requireApproval: false
+    }
+  );
+  const agent = new Agent({
+    name: "mcp-no-approval",
+    instructions: "test",
+    tools: [mcpTool]
+  });
+
+  const result = await runner.run(agent, "read", {
+    extensions: {
+      toolCalls: [{ toolName: mcpTool.name, args: { toolName: "read_file", args: {} } }]
+    }
+  });
+
+  assert.equal(result.interruptions, undefined);
+  assert.equal(result.tool_calls.length, 1);
 });
 
 test("guardrails deny input before SafetyAgent evaluation", async () => {
@@ -236,6 +311,34 @@ test("run processes model planned tool calls without extensions.toolCalls", asyn
   assert.equal(generateCount, 2);
 });
 
+test("runner forwards RunOptions.stream to model.generate", async () => {
+  const seen: boolean[] = [];
+  const model = {
+    provider: "openai" as const,
+    name: "mock",
+    baseUrl: "https://api.openai.com/v1",
+    timeoutMs: 60_000,
+    async generate(request: { stream?: boolean }) {
+      seen.push(request.stream === true);
+      return {
+        outputText: "stream-ok"
+      };
+    }
+  };
+
+  const runner = createRunner();
+  const agent = new Agent({
+    name: "stream-agent",
+    instructions: "test stream",
+    model,
+    tools: []
+  });
+
+  const result = await runner.run(agent, "hello", { stream: true });
+  assert.equal(result.output_text, "stream-ok");
+  assert.deepEqual(seen, [true]);
+});
+
 test("SafetyAgent invalid structured output is fail-closed", async () => {
   const runner = createRunner({
     safetyAgent: new SafetyAgent(() => ({
@@ -268,6 +371,218 @@ test("SafetyAgent invalid structured output is fail-closed", async () => {
       return true;
     }
   );
+});
+
+test("ModelSafetyAgent evaluates with rubric and agent capability context", async () => {
+  let capturedPrompt = "";
+  const model = {
+    provider: "openai" as const,
+    name: "mock-safety-model",
+    baseUrl: "https://api.openai.com/v1",
+    timeoutMs: 60_000,
+    async generate(request: { inputText: string }) {
+      capturedPrompt = request.inputText;
+      return {
+        outputText: JSON.stringify({
+          decision: "deny",
+          reason: "rubric matched dangerous tool",
+          risk_level: 5,
+          policy_ref: "balanced"
+        })
+      };
+    }
+  };
+
+  const runner = createRunner({
+    safetyAgent: new ModelSafetyAgent({
+      model,
+      rubric: [
+        "Deny any tool call that can modify files without explicit review",
+        "Escalate risky operations to humans"
+      ]
+    })
+  });
+
+  const mcpTool = hostedMcpTool(
+    {
+      id: "workspace",
+      url: "http://localhost:5600",
+      callTool: async () => ({ ok: true })
+    },
+    {
+      capabilities: [{ name: "write_file", description: "write", risk_level: 5 }],
+      requireApproval: false
+    }
+  );
+  const agent = new Agent({
+    name: "model-safety-agent-test",
+    instructions: "test",
+    tools: [mcpTool]
+  });
+
+  await assert.rejects(
+    () =>
+      runner.run(agent, "write file", {
+        extensions: {
+          toolCalls: [
+            {
+              toolName: mcpTool.name,
+              args: { toolName: "write_file", args: { path: "a.txt", content: "x" } }
+            }
+          ]
+        }
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof AgentsError);
+      assert.equal(error.code, "AGENTS-E-GATE-DENIED");
+      return true;
+    }
+  );
+
+  assert.match(capturedPrompt, /Deny any tool call/);
+  assert.match(capturedPrompt, /write_file/);
+  assert.match(capturedPrompt, /tool_catalog/);
+  assert.match(capturedPrompt, /capability_snapshot/);
+});
+
+test("ModelSafetyAgent malformed JSON is fail-closed", async () => {
+  const model = {
+    provider: "openai" as const,
+    name: "mock-safety-model",
+    baseUrl: "https://api.openai.com/v1",
+    timeoutMs: 60_000,
+    async generate() {
+      return {
+        outputText: "not-json"
+      };
+    }
+  };
+
+  const runner = createRunner({
+    safetyAgent: new ModelSafetyAgent({
+      model,
+      rubric: ["Deny dangerous calls"]
+    })
+  });
+  const echoTool = tool({
+    name: "echo",
+    description: "echo",
+    execute: async (args) => args
+  });
+  const agent = new Agent({
+    name: "model-safety-malformed",
+    instructions: "test",
+    tools: [echoTool]
+  });
+
+  await assert.rejects(
+    () =>
+      runner.run(agent, "hello", {
+        extensions: {
+          toolCalls: [{ toolName: "echo", args: { text: "hello" } }]
+        }
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof AgentsError);
+      assert.equal(error.code, "AGENTS-E-GATE-EVAL");
+      return true;
+    }
+  );
+});
+
+test("ModelSafetyAgent does not include user_intent by default", async () => {
+  let capturedPrompt = "";
+  const model = {
+    provider: "openai" as const,
+    name: "mock-safety-model",
+    baseUrl: "https://api.openai.com/v1",
+    timeoutMs: 60_000,
+    async generate(request: { inputText: string }) {
+      capturedPrompt = request.inputText;
+      return {
+        outputText: JSON.stringify({
+          decision: "allow",
+          reason: "safe",
+          risk_level: 1,
+          policy_ref: "balanced"
+        })
+      };
+    }
+  };
+
+  const runner = createRunner({
+    safetyAgent: new ModelSafetyAgent({
+      model,
+      rubric: ["Allow safe calls"]
+    })
+  });
+  const echoTool = tool({
+    name: "echo",
+    description: "echo",
+    execute: async (args) => args
+  });
+  const agent = new Agent({
+    name: "model-safety-user-intent-default",
+    instructions: "test",
+    tools: [echoTool]
+  });
+
+  await runner.run(agent, "secret-token-123", {
+    extensions: {
+      toolCalls: [{ toolName: "echo", args: { text: "hello" } }]
+    }
+  });
+
+  assert.doesNotMatch(capturedPrompt, /secret-token-123/);
+  assert.doesNotMatch(capturedPrompt, /user_intent/);
+});
+
+test("ModelSafetyAgent can include user_intent when enabled", async () => {
+  let capturedPrompt = "";
+  const model = {
+    provider: "openai" as const,
+    name: "mock-safety-model",
+    baseUrl: "https://api.openai.com/v1",
+    timeoutMs: 60_000,
+    async generate(request: { inputText: string }) {
+      capturedPrompt = request.inputText;
+      return {
+        outputText: JSON.stringify({
+          decision: "allow",
+          reason: "safe",
+          risk_level: 1,
+          policy_ref: "balanced"
+        })
+      };
+    }
+  };
+
+  const runner = createRunner({
+    safetyAgent: new ModelSafetyAgent({
+      model,
+      rubric: ["Allow safe calls"],
+      includeUserIntent: true
+    })
+  });
+  const echoTool = tool({
+    name: "echo",
+    description: "echo",
+    execute: async (args) => args
+  });
+  const agent = new Agent({
+    name: "model-safety-user-intent-enabled",
+    instructions: "test",
+    tools: [echoTool]
+  });
+
+  await runner.run(agent, "secret-token-123", {
+    extensions: {
+      toolCalls: [{ toolName: "echo", args: { text: "hello" } }]
+    }
+  });
+
+  assert.match(capturedPrompt, /user_intent/);
+  assert.match(capturedPrompt, /secret-token-123/);
 });
 
 test("SafetyAgent runtime error is fail-closed", async () => {

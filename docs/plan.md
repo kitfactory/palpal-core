@@ -50,3 +50,16 @@
 - [x] Skillメタ情報（概要/サンプル/詳細）のI/F方針を設計へ反映する
 - [x] architecture の主要レイヤーと依存方向を確定する
 - [x] 主要クラスI/FとOpenAI Agents SDK比較をarchitectureへ反映する
+- [x] SafetyAgent未指定時は追加チェックなしで実行できるようにRunnerを任意化する
+- [x] `RunOptions.stream` をモデル呼び出しへ伝播する実装とテストを追加する
+- [x] ProviderをOpenAI互換 Chat Completions 実呼び出し実装へ更新する
+- [x] npm公開時ビルド自動化のため `prepack` を追加する
+- [x] OpenAI/LMStudio の実疎通評価を実施し、実行環境の接続制約を確認する
+- [x] Filesystem MCP + SafetyAgent + approveAndResume の実行サンプルを追加する
+- [x] 英日チュートリアルから Filesystem MCP サンプルを参照できるようにする
+- [x] `hostedMcpTool.requireApproval` を Runner 実行制御へ連動し、MCP承認必須を強制できるようにする
+- [x] `requireApproval` 既定値/無効化(`false`)の回帰テストを追加する
+- [x] ModelSafetyAgent（model + rubric + 構造化判定）を実装する
+- [x] ModelSafetyAgent の回帰テスト（rubric反映/不正JSON fail-closed）を追加する
+- [x] ModelSafetyAgent の既定入力方針（`includeUserIntent=false`）を実装し回帰テストで固定する
+- [x] ModelSafetyAgent サンプルを追加し、README/チュートリアルから参照可能にする

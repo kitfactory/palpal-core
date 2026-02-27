@@ -25,16 +25,25 @@ interface SuspendedRunState {
   continuation: "manual" | "model";
   remainingModelTurns: number;
   requireHumanApproval: boolean;
+  stream: boolean;
 }
 
 export class AgentRunner {
-  private readonly gate: SafetyGate;
+  private readonly gate?: SafetyGate;
   private readonly approvalController: ApprovalController;
   private readonly suspendedRuns = new Map<string, SuspendedRunState>();
 
-  public constructor(options: AgentRunnerOptions) {
-    ensure(options?.safetyAgent, "AGENTS-E-RUNNER-CONFIG", "safetyAgent is required.");
-    this.gate = new SafetyGate(options.safetyAgent as SafetyAgent, options.policyStore);
+  public constructor(options: AgentRunnerOptions = {}) {
+    if (options.safetyAgent) {
+      const safetyAgent =
+        options.safetyAgent instanceof SafetyAgent
+          ? options.safetyAgent
+          : new SafetyAgent(options.safetyAgent.evaluate.bind(options.safetyAgent));
+      this.gate = new SafetyGate(
+        safetyAgent,
+        options.policyStore
+      );
+    }
     this.approvalController = new ApprovalController(options.resumeTokenTtlSec ?? 900);
   }
 
@@ -54,6 +63,7 @@ export class AgentRunner {
     const policyProfile = options?.extensions?.policyProfile ?? "balanced";
     const requireHumanApproval = options?.extensions?.requireHumanApproval ?? false;
     const requestedCalls = options?.extensions?.toolCalls ?? [];
+    const stream = options?.stream ?? false;
 
     if (requestedCalls.length > 0) {
       const manual = await this.processRequestedCalls({
@@ -65,14 +75,23 @@ export class AgentRunner {
         continuation: "manual",
         remainingModelTurns: 0,
         requestedCalls,
-        executedCalls: []
+        executedCalls: [],
+        stream
       });
 
       if (manual.interrupted) {
         return manual.interrupted;
       }
 
-      return this.completeRun(runId, agent, inputText, manual.executedCalls, policyProfile);
+      return this.completeRun(
+        runId,
+        agent,
+        inputText,
+        manual.executedCalls,
+        policyProfile,
+        undefined,
+        stream
+      );
     }
 
     if (agent.model) {
@@ -84,10 +103,11 @@ export class AgentRunner {
         policyProfile,
         requireHumanApproval,
         executedCalls: [],
-        remainingTurns: maxTurns
+        remainingTurns: maxTurns,
+        stream
       });
     }
-    return this.completeRun(runId, agent, inputText, [], policyProfile);
+    return this.completeRun(runId, agent, inputText, [], policyProfile, undefined, stream);
   }
 
   public async getPendingApprovals(runId?: string) {
@@ -155,7 +175,8 @@ export class AgentRunner {
       continuation: state.continuation,
       remainingModelTurns: state.remainingModelTurns,
       requestedCalls: remainingCalls,
-      executedCalls
+      executedCalls,
+      stream: state.stream
     });
 
     if (resumed.interrupted) {
@@ -171,7 +192,8 @@ export class AgentRunner {
         policyProfile: state.policyProfile,
         requireHumanApproval: state.requireHumanApproval,
         executedCalls: resumed.executedCalls,
-        remainingTurns: state.remainingModelTurns
+        remainingTurns: state.remainingModelTurns,
+        stream: state.stream
       });
     }
 
@@ -180,7 +202,9 @@ export class AgentRunner {
       state.agent,
       state.inputText,
       resumed.executedCalls,
-      state.policyProfile
+      state.policyProfile,
+      undefined,
+      state.stream
     );
   }
 
@@ -211,7 +235,23 @@ export class AgentRunner {
       user_intent: requested.userIntent ?? inputText
     };
 
-    let gateDecision = await this.gate.evaluate(agent, gateRequest, { policyProfile });
+    let gateDecision: GateDecision;
+    if (this.gate) {
+      gateDecision = await this.gate.evaluate(agent, gateRequest, { policyProfile });
+    } else {
+      gateDecision = {
+        decision: "allow",
+        reason: "SafetyAgent is not configured.",
+        risk_level: 1
+      };
+    }
+    if (requiresMcpHumanApproval(tool) && gateDecision.decision === "allow") {
+      gateDecision = {
+        decision: "needs_human",
+        reason: "MCP tool is configured with requireApproval=true.",
+        risk_level: Math.max(3, gateDecision.risk_level)
+      };
+    }
     if (requireHumanApproval && gateDecision.decision === "allow") {
       gateDecision = {
         decision: "needs_human",
@@ -247,6 +287,7 @@ export class AgentRunner {
     requireHumanApproval: boolean;
     executedCalls: ToolCallResult[];
     remainingTurns: number;
+    stream: boolean;
   }): Promise<RunResult> {
     let executedCalls = [...params.executedCalls];
 
@@ -257,7 +298,8 @@ export class AgentRunner {
       const modelResult = await model.generate({
         agent: params.agent,
         inputText: params.inputText,
-        toolCalls: executedCalls
+        toolCalls: executedCalls,
+        stream: params.stream
       });
       const planned = modelResult.toolCalls ?? [];
 
@@ -269,7 +311,8 @@ export class AgentRunner {
           params.inputText,
           executedCalls,
           params.policyProfile,
-          outputText
+          outputText,
+          params.stream
         );
       }
 
@@ -282,7 +325,8 @@ export class AgentRunner {
         continuation: "model",
         remainingModelTurns: params.remainingTurns - (turn + 1),
         requestedCalls: planned,
-        executedCalls
+        executedCalls,
+        stream: params.stream
       });
 
       if (sequence.interrupted) {
@@ -307,6 +351,7 @@ export class AgentRunner {
     remainingModelTurns: number;
     requestedCalls: RequestedToolCall[];
     executedCalls: ToolCallResult[];
+    stream: boolean;
   }): Promise<{ executedCalls: ToolCallResult[]; interrupted?: RunResult }> {
     const executedCalls = [...params.executedCalls];
 
@@ -330,7 +375,8 @@ export class AgentRunner {
           executedCalls,
           continuation: params.continuation,
           remainingModelTurns: params.remainingModelTurns,
-          requireHumanApproval: params.requireHumanApproval
+          requireHumanApproval: params.requireHumanApproval,
+          stream: params.stream
         });
 
         return {
@@ -378,9 +424,10 @@ export class AgentRunner {
     inputText: string,
     toolCalls: ToolCallResult[],
     policyProfile: "strict" | "balanced" | "fast",
-    outputTextOverride?: string
+    outputTextOverride?: string,
+    stream = false
   ): Promise<RunResult> {
-    const output = outputTextOverride ?? await generateOutput(agent, inputText, toolCalls);
+    const output = outputTextOverride ?? await generateOutput(agent, inputText, toolCalls, stream);
     await runGuardrails(agent, {
       stage: "output",
       agent,
@@ -419,11 +466,11 @@ async function runGuardrails(agent: AgentLike, input: GuardrailCheckInput): Prom
   }
 }
 
-export function createRunner(options: AgentRunnerOptions): AgentRunner {
+export function createRunner(options: AgentRunnerOptions = {}): AgentRunner {
   return new AgentRunner(options);
 }
 
-const defaultRunner = createRunner({ safetyAgent: SafetyAgent.allowAll() });
+const defaultRunner = createRunner();
 
 export async function run(
   agent: AgentLike,
@@ -485,6 +532,21 @@ function findTool(tools: Tool[], name: string): Tool {
   return tool;
 }
 
+function requiresMcpHumanApproval(tool: Tool): boolean {
+  if (tool.kind !== "mcp") {
+    return false;
+  }
+  const snakeCase = tool.metadata?.require_approval;
+  if (typeof snakeCase === "boolean") {
+    return snakeCase;
+  }
+  const camelCase = tool.metadata?.requireApproval;
+  if (typeof camelCase === "boolean") {
+    return camelCase;
+  }
+  return false;
+}
+
 async function executeTool(
   runId: string,
   agent: AgentLike,
@@ -527,13 +589,15 @@ function usageFromText(inputText: string, outputText: string) {
 async function generateOutput(
   agent: AgentLike,
   inputText: string,
-  toolCalls: ToolCallResult[]
+  toolCalls: ToolCallResult[],
+  stream: boolean
 ): Promise<string> {
   if (agent.model) {
     const modelResult = await agent.model.generate({
       agent,
       inputText,
-      toolCalls
+      toolCalls,
+      stream
     });
     return modelResult.outputText ?? defaultOutputText(inputText, toolCalls);
   }

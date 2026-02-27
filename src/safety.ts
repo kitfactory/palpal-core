@@ -4,6 +4,7 @@ import {
   AgentLike,
   GateDecision,
   McpCapabilitySummary,
+  Model,
   PolicyProfile,
   PolicyProfileName,
   PolicyStore,
@@ -47,6 +48,85 @@ export class SafetyAgent {
         error
       );
     }
+  }
+}
+
+export interface ModelSafetyAgentOptions {
+  model: Model;
+  rubric: string | string[];
+  name?: string;
+  includeUserIntent?: boolean;
+}
+
+export class ModelSafetyAgent {
+  private readonly model: Model;
+  private readonly rubricLines: string[];
+  private readonly name: string;
+  private readonly includeUserIntent: boolean;
+
+  public constructor(options: ModelSafetyAgentOptions) {
+    ensure(options?.model, "AGENTS-E-GATE-EVAL", "ModelSafetyAgent.model is required.");
+    const rubricLines = normalizeRubric(options.rubric);
+    ensure(
+      rubricLines.length > 0,
+      "AGENTS-E-GATE-EVAL",
+      "ModelSafetyAgent.rubric must include at least one rule."
+    );
+
+    this.model = options.model;
+    this.rubricLines = rubricLines;
+    this.name = options.name?.trim() || "model-safety-agent";
+    this.includeUserIntent = options.includeUserIntent === true;
+  }
+
+  public async evaluate(
+    agent: AgentLike,
+    request: ToolCallRequest,
+    policy: PolicyProfile
+  ): Promise<SafetyAgentDecision> {
+    const capabilitySnapshot = request.capability_snapshot ?? deriveAgentCapabilitySnapshot(agent);
+    const toolCatalog = request.tool_catalog ?? capabilitySnapshot.tool_catalog;
+    const targetTool =
+      request.target_tool ??
+      toolCatalog.find((tool) => tool.name === request.tool_name);
+
+    const prompt = buildModelSafetyPrompt({
+      rubricLines: this.rubricLines,
+      includeUserIntent: this.includeUserIntent,
+      policy,
+      request: {
+        ...request,
+        capability_snapshot: capabilitySnapshot,
+        tool_catalog: toolCatalog,
+        target_tool: targetTool
+      }
+    });
+
+    const safetyAgentLike: AgentLike = {
+      name: this.name,
+      instructions: [
+        "You are a safety evaluator for tool execution.",
+        "Return JSON only. Do not include markdown."
+      ].join(" "),
+      tools: []
+    };
+
+    const result = await this.model.generate({
+      agent: safetyAgentLike,
+      inputText: prompt,
+      toolCalls: [],
+      stream: false
+    });
+
+    const outputText = result.outputText?.trim() ?? "";
+    ensure(
+      outputText.length > 0,
+      "AGENTS-E-GATE-EVAL",
+      "ModelSafetyAgent returned empty output."
+    );
+
+    const parsed = parseModelSafetyDecision(outputText);
+    return normalizeDecision(parsed, policy.name);
   }
 }
 
@@ -287,4 +367,137 @@ function normalizeDecision(
     risk_level: decision.risk_level,
     policy_ref: decision.policy_ref ?? policyRefFallback
   };
+}
+
+function normalizeRubric(rubric: string | string[]): string[] {
+  if (typeof rubric === "string") {
+    return rubric
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+  if (!Array.isArray(rubric)) {
+    return [];
+  }
+
+  return rubric
+    .map((line) => (typeof line === "string" ? line.trim() : ""))
+    .filter((line) => line.length > 0);
+}
+
+function buildModelSafetyPrompt(params: {
+  rubricLines: string[];
+  includeUserIntent: boolean;
+  policy: PolicyProfile;
+  request: ToolCallRequest;
+}): string {
+  const rubric = params.rubricLines.map((line, index) => `${index + 1}. ${line}`).join("\n");
+  const requestPayload: Record<string, unknown> = {
+    tool_name: params.request.tool_name,
+    tool_kind: params.request.tool_kind,
+    args: params.request.args
+  };
+  if (params.includeUserIntent) {
+    requestPayload.user_intent = params.request.user_intent;
+  }
+
+  const payload = {
+    policy: {
+      name: params.policy.name,
+      approval_mode: params.policy.approval_mode,
+      allowed_tool_scopes: params.policy.allowed_tool_scopes
+    },
+    request: requestPayload,
+    target_tool: params.request.target_tool ?? null,
+    tool_catalog: params.request.tool_catalog ?? [],
+    capability_snapshot: params.request.capability_snapshot ?? null
+  };
+
+  return [
+    "Evaluate whether the requested tool call should be allowed.",
+    "",
+    "Rubric:",
+    rubric,
+    "",
+    "Decision rules:",
+    "1) Return exactly one JSON object.",
+    "2) decision must be one of: allow, deny, needs_human.",
+    "3) risk_level must be integer 1..5.",
+    "4) reason must be concise and specific.",
+    "5) policy_ref must reference current policy name.",
+    "",
+    "Input:",
+    safeJson(payload),
+    "",
+    "Output schema:",
+    "{\"decision\":\"allow|deny|needs_human\",\"reason\":\"...\",\"risk_level\":1,\"policy_ref\":\"...\"}"
+  ].join("\n");
+}
+
+function parseModelSafetyDecision(outputText: string): SafetyAgentDecisionInput {
+  const jsonText = extractJsonObject(outputText);
+  ensure(
+    jsonText.length > 0,
+    "AGENTS-E-GATE-EVAL",
+    "ModelSafetyAgent output does not contain a JSON object."
+  );
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    throw new AgentsError(
+      "AGENTS-E-GATE-EVAL",
+      "ModelSafetyAgent returned invalid JSON.",
+      error
+    );
+  }
+
+  ensure(
+    parsed && typeof parsed === "object" && !Array.isArray(parsed),
+    "AGENTS-E-GATE-EVAL",
+    "ModelSafetyAgent output must be a JSON object."
+  );
+
+  const record = parsed as Record<string, unknown>;
+  ensure(
+    typeof record.decision === "string",
+    "AGENTS-E-GATE-EVAL",
+    "ModelSafetyAgent decision.decision is required."
+  );
+  ensure(
+    typeof record.reason === "string" && record.reason.length > 0,
+    "AGENTS-E-GATE-EVAL",
+    "ModelSafetyAgent decision.reason is required."
+  );
+  ensure(
+    typeof record.risk_level === "number",
+    "AGENTS-E-GATE-EVAL",
+    "ModelSafetyAgent decision.risk_level is required."
+  );
+
+  const policyRef = typeof record.policy_ref === "string" ? record.policy_ref : undefined;
+  return {
+    decision: record.decision as GateDecision["decision"],
+    reason: record.reason,
+    risk_level: Math.floor(record.risk_level),
+    policy_ref: policyRef
+  };
+}
+
+function extractJsonObject(text: string): string {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < start) {
+    return "";
+  }
+  return text.slice(start, end + 1).trim();
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "{\"error\":\"json_serialization_failed\"}";
+  }
 }

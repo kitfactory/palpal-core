@@ -83,6 +83,7 @@ export interface ModelGenerateRequest {
   agent: AgentLike;
   inputText: string;
   toolCalls: ToolCallResult[];
+  stream?: boolean;
 }
 
 export interface ModelGenerateResult {
@@ -273,7 +274,7 @@ export interface SkillSummary {
 }
 
 export interface AgentRunnerOptions {
-  safetyAgent: {
+  safetyAgent?: {
     evaluate(
       agent: AgentLike,
       request: ToolCallRequest,

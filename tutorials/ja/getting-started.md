@@ -5,13 +5,13 @@
 ## 1. インストール
 
 ```bash
-npm install pal-core
+npm install palpal-core
 ```
 
 ## 2. Provider を選ぶ
 
 ```ts
-import { getProvider } from "pal-core";
+import { getProvider } from "palpal-core";
 
 const model = getProvider("ollama").getModel("gpt-oss-20b");
 ```
@@ -19,7 +19,7 @@ const model = getProvider("ollama").getModel("gpt-oss-20b");
 ## 3. Skills を読み込み Tool 化する
 
 ```ts
-import { loadSkills, toTools, toIntrospectionTools } from "pal-core";
+import { loadSkills, toTools, toIntrospectionTools } from "palpal-core";
 
 const skills = await loadSkills({ dir: "./skills", mode: "function_tool" });
 const skillTools = toTools(skills);
@@ -29,7 +29,7 @@ const skillInfoTools = toIntrospectionTools(skills); // skill.list / skill.descr
 ## 4. MCP Tool を追加する
 
 ```ts
-import { hostedMcpTool } from "pal-core";
+import { hostedMcpTool } from "palpal-core";
 
 const mcpTool = hostedMcpTool(
   {
@@ -46,7 +46,7 @@ const mcpTool = hostedMcpTool(
 ## 5. SafetyAgent + guardrails で防御する
 
 ```ts
-import { Agent, SafetyAgent, createRunner } from "pal-core";
+import { Agent, SafetyAgent, createRunner } from "palpal-core";
 
 const runner = createRunner({
   safetyAgent: new SafetyAgent(async (_agent, request) => {
@@ -104,3 +104,20 @@ if (interrupted.interruptions?.length) {
 - `SafetyAgent`: MCP/Skills 実行可否の主判定
 - `guardrails`: 入力/ツール/出力の禁止ルールを短く定義
 - `needs_human`: 高リスク処理のみ人間に確認
+
+## 8. Filesystem MCP サンプル
+
+`SafetyAgent` が高リスクな MCP 呼び出し（`write_file`）を中断し、
+承認後に `approveAndResume` で再開する実行例は以下を参照してください。
+
+- [`tutorials/samples/filesystem-mcp-safety.ts`](../samples/filesystem-mcp-safety.ts)
+
+## 9. ModelSafetyAgent サンプル
+
+model + rubric で安全判定し、構造化出力で `allow|deny|needs_human` を返す実行例:
+
+- [`tutorials/samples/model-safety-agent.ts`](../samples/model-safety-agent.ts)
+
+`ModelSafetyAgent` は既定で `includeUserIntent: false` です。
+明示的に有効化しない限り、ユーザー入力テキストは判定プロンプトへ含めません。
+

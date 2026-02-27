@@ -11,6 +11,8 @@
 | REQ-0005 | 設定不足・形式不正を検出し、エラーID付きで返せる | UC-3, UC-4 |
 | REQ-0006 | `run` / `resumeRun` の戻り値は `RunResult` で、`interruptions` と `extensions` を optional で持てる | UC-1, UC-4 |
 | REQ-0007 | 承認と再開は `approveAndResume` の1段APIでも実行できる | UC-4 |
+| REQ-0008 | `hostedMcpTool` が `requireApproval=true` の場合、実行前に `needs_human` として中断できる | UC-1, UC-4 |
+| REQ-0009 | `ModelSafetyAgent` は model + rubric 入力で構造化判定し、対象Agentの tool/skill/MCP 文脈を使える | UC-1, UC-4 |
 
 ## [AGENTS-0001] Provider選択
 Given: 実行時に Provider が未指定または指定済み
@@ -46,6 +48,16 @@ Done: 返却型は `RunResult` で、`interruptions?: HumanApprovalRequest[]` �
 Given: 実行が `needs_human` で中断し、`approval_id` が取得できている
 When: `approveAndResume(runId, approvalId, options?)` を呼ぶ
 Done: `submitApproval` + `resumeRun` を内部で連結し、`RunResult` を返す
+
+## [AGENTS-0008] MCP requireApproval 実行制御
+Given: `hostedMcpTool(..., { requireApproval: true })` で作成した MCP tool が実行対象
+When: `run` により当該 tool call を処理する
+Done: SafetyAgent 判定が `allow` でも `needs_human` へ昇格し、承認待ち中断 (`interruptions`) を返せる
+
+## [AGENTS-0009] ModelSafetyAgent 判定
+Given: `ModelSafetyAgent({ model, rubric })` が設定されている
+When: tool/skill/MCP の実行判定を行う
+Done: 対象Agent由来の capability/tool catalog を入力に含め、`allow|deny|needs_human` の構造化出力で判定できる。既定では `includeUserIntent=false` のため生のユーザー入力は判定プロンプトへ含めない
 
 ## Provider環境変数
 | Provider | API Key | Base URL | Model | 追加キー |

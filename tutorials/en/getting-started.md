@@ -5,13 +5,13 @@ This tutorial combines `SafetyAgent + MCP + Skills + Guardrails + Human approval
 ## 1. Install
 
 ```bash
-npm install pal-core
+npm install palpal-core
 ```
 
 ## 2. Pick a provider
 
 ```ts
-import { getProvider } from "pal-core";
+import { getProvider } from "palpal-core";
 
 const model = getProvider("ollama").getModel("gpt-oss-20b");
 ```
@@ -19,7 +19,7 @@ const model = getProvider("ollama").getModel("gpt-oss-20b");
 ## 3. Load Skills and convert to tools
 
 ```ts
-import { loadSkills, toTools, toIntrospectionTools } from "pal-core";
+import { loadSkills, toTools, toIntrospectionTools } from "palpal-core";
 
 const skills = await loadSkills({ dir: "./skills", mode: "function_tool" });
 const skillTools = toTools(skills);
@@ -29,7 +29,7 @@ const skillInfoTools = toIntrospectionTools(skills); // skill.list / skill.descr
 ## 4. Add MCP tool
 
 ```ts
-import { hostedMcpTool } from "pal-core";
+import { hostedMcpTool } from "palpal-core";
 
 const mcpTool = hostedMcpTool(
   {
@@ -46,7 +46,7 @@ const mcpTool = hostedMcpTool(
 ## 5. Defend with SafetyAgent + guardrails
 
 ```ts
-import { Agent, SafetyAgent, createRunner } from "pal-core";
+import { Agent, SafetyAgent, createRunner } from "palpal-core";
 
 const runner = createRunner({
   safetyAgent: new SafetyAgent(async (_agent, request) => {
@@ -104,3 +104,20 @@ if (interrupted.interruptions?.length) {
 - `SafetyAgent`: primary Go/No-Go for MCP/Skills/tool execution
 - `guardrails`: simple stage-based block rules (`input/tool/output`)
 - `needs_human`: explicit human review only for risky operations
+
+## 8. Filesystem MCP sample
+
+For a concrete, runnable sample of `SafetyAgent` stopping a risky MCP call (`write_file`)
+and resuming only after approval, see:
+
+- [`tutorials/samples/filesystem-mcp-safety.ts`](../samples/filesystem-mcp-safety.ts)
+
+## 9. ModelSafetyAgent sample
+
+For model-based safety evaluation with rubric rules and structured decisions, see:
+
+- [`tutorials/samples/model-safety-agent.ts`](../samples/model-safety-agent.ts)
+
+`ModelSafetyAgent` defaults to `includeUserIntent: false`, so raw user input text is not included
+in the safety-judge prompt unless explicitly enabled.
+

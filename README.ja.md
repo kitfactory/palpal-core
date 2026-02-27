@@ -1,6 +1,13 @@
-# pal-core (日本語)
+# palpal-core (日本語)
 
-`pal-core` は、OpenAI Agents SDK (TypeScript) の呼び出し感を保ちながら、実運用で不足しやすい安全制御を補う npm ライブラリです。
+`palpal-core` は、安全性を重視した OpenAI Agents SDK 互換（TypeScript）の npm ライブラリです。
+Agents SDK の使い勝手を保ちながら、MCP / Skills / Tool 実行の実運用向け安全制御を追加します。
+
+## 位置づけ
+
+- OpenAI Agents SDK 互換I/Fを維持し、移行コストを最小化
+- `SafetyAgent + Guardrails + Approval flow` による Safety-first 実行モデル
+- MCP / Skills を「実行前」に防御しやすい設計
 
 ## 何を解決するか
 
@@ -11,7 +18,7 @@
 - 人間承認が必要な処理の「中断 -> 再開」制御が分散しやすい
 - Chat Completions 互換モデル（Ollama など）を統一I/Fで扱いにくい
 
-`pal-core` はこれを、`SafetyAgent + Guardrails + Approval flow` で最小差分に統合します。
+`palpal-core` はこれを、`SafetyAgent + Guardrails + Approval flow` で最小差分に統合します。
 
 ## 設計のポイント
 
@@ -22,6 +29,11 @@
 - SafetyAgent:
   - `runner.run(agent, ...)` 時に `Agent` から Skills/MCP/Tools を自動抽出
   - Go/No-Go/needs_human を fail-closed で判定
+- ModelSafetyAgent:
+  - model + rubric（箇条書き文字列）で判定器を構成
+  - 対象 `Agent` の tool/skill/MCP 文脈を入力に含める
+  - 構造化出力（`allow|deny|needs_human`）で安定判定
+  - 既定は `includeUserIntent: false`（生のユーザー入力は含めない）
 - OpenAI Agents SDK の一般ガードレール併用:
   - `agent.guardrails.input/tool/output` を追加
   - `SafetyAgent` とは独立に deny できる二重防御
@@ -36,7 +48,7 @@
 ## インストール
 
 ```bash
-npm install pal-core
+npm install palpal-core
 ```
 
 ## 最小例
@@ -48,7 +60,7 @@ import {
   createRunner,
   tool,
   getProvider
-} from "pal-core";
+} from "palpal-core";
 
 const runner = createRunner({
   safetyAgent: new SafetyAgent(async (_agent, request) => {
@@ -97,3 +109,6 @@ const result = await runner.run(agent, "hello", {
 
 - 日本語: [tutorials/ja/getting-started.md](./tutorials/ja/getting-started.md)
 - 英語: [tutorials/en/getting-started.md](./tutorials/en/getting-started.md)
+- Filesystem MCP + SafetyAgent サンプル: [tutorials/samples/filesystem-mcp-safety.ts](./tutorials/samples/filesystem-mcp-safety.ts)
+- ModelSafetyAgent サンプル: [tutorials/samples/model-safety-agent.ts](./tutorials/samples/model-safety-agent.ts)
+

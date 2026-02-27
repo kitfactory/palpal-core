@@ -1,6 +1,13 @@
-# pal-core
+# palpal-core
 
-`pal-core` is an npm library that keeps the OpenAI Agents SDK (TypeScript) style while adding practical safety controls.
+`palpal-core` is a high-safety, OpenAI Agents SDK-compatible npm library for TypeScript.
+It keeps the familiar Agents SDK style while adding practical runtime safety controls for MCP, Skills, and tool execution.
+
+## Positioning
+
+- OpenAI Agents SDK-compatible interface with minimal migration cost
+- Safety-first execution model (`SafetyAgent + Guardrails + Approval flow`)
+- Designed to make MCP/Skills easier to defend before execution
 
 ## What problems it solves
 
@@ -11,7 +18,7 @@ In many current agent stacks:
 - Human approval flows (`pause -> resume`) are fragmented
 - Chat Completions compatible backends are not unified
 
-`pal-core` addresses this with a single execution layer:
+`palpal-core` addresses this with a single execution layer:
 `SafetyAgent + Guardrails + Approval flow`.
 
 ## Design highlights
@@ -23,6 +30,13 @@ In many current agent stacks:
 - `SafetyAgent`:
   - derives Skills/MCP/Tools from the `Agent` at `runner.run(...)`
   - fail-closed Go/No-Go/needs_human decision
+- `ModelSafetyAgent`:
+  - accepts a model + rubric (bullet-string rules)
+  - evaluates tool/skill/MCP context from the target `Agent`
+  - returns stable structured decision (`allow|deny|needs_human`)
+  - defaults to `includeUserIntent: false` (raw user input is excluded)
+- MCP approval policy:
+  - `hostedMcpTool(..., { requireApproval: true })` forces `needs_human` before execution
 - General guardrails (OpenAI Agents SDK style) are also supported:
   - `agent.guardrails.input/tool/output`
   - independent deny path in addition to `SafetyAgent`
@@ -37,7 +51,7 @@ In many current agent stacks:
 ## Install
 
 ```bash
-npm install pal-core
+npm install palpal-core
 ```
 
 ## Minimal example
@@ -49,7 +63,7 @@ import {
   createRunner,
   tool,
   getProvider
-} from "pal-core";
+} from "palpal-core";
 
 const runner = createRunner({
   safetyAgent: new SafetyAgent(async (_agent, request) => {
@@ -99,3 +113,6 @@ const result = await runner.run(agent, "hello", {
 - Japanese README: [README.ja.md](./README.ja.md)
 - Japanese tutorial: [tutorials/ja/getting-started.md](./tutorials/ja/getting-started.md)
 - English tutorial: [tutorials/en/getting-started.md](./tutorials/en/getting-started.md)
+- Filesystem MCP + SafetyAgent sample: [tutorials/samples/filesystem-mcp-safety.ts](./tutorials/samples/filesystem-mcp-safety.ts)
+- ModelSafetyAgent sample: [tutorials/samples/model-safety-agent.ts](./tutorials/samples/model-safety-agent.ts)
+
