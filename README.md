@@ -46,7 +46,29 @@ In many current agent stacks:
   - `listSkills` / `describeSkill` / `toIntrospectionTools`
 - Providers:
   - `getProvider("ollama").getModel("gpt-oss-20b")`
+  - `listProviders()` -> `ProviderName[]`
+  - `await getProvider("ollama").listModels({ baseUrl, apiKey })`
+  - `await getProvider("openai").listModels({ BASE_URL, API_KEY })`
+  - config precedence: `direct options > .env > process.env`
+  - missing provider suffix in `baseUrl` is auto-completed (`/v1`, `/v1beta/openai`, `/api/v1`, etc.)
+  - model-list timeout precedence: `direct timeout > AGENTS_MODEL_LIST_TIMEOUT_MS > AGENTS_REQUEST_TIMEOUT_MS > 2000ms`
+  - if `/models` is unreachable: fallback to `configured` -> `default` -> `environment_dependent`
+  - fallback responses include `runtimeApiFailure` (`code/message/status/statusText`)
   - OpenAI / Ollama / LM Studio / Gemini / Anthropic / OpenRouter
+
+Provider model-list diagnostics example:
+
+```ts
+const modelList = await getProvider("anthropic").listModels({
+  baseUrl: "https://api.anthropic.com", // suffix (/v1) is auto-completed
+  apiKey: process.env.AGENTS_ANTHROPIC_API_KEY
+});
+
+if (modelList.resolution !== "runtime_api") {
+  console.warn(modelList.runtimeApiFailure);
+  // { code: "http_error" | "timeout" | ..., message, status?, statusText? }
+}
+```
 
 ## Install
 
@@ -115,4 +137,3 @@ const result = await runner.run(agent, "hello", {
 - English tutorial: [tutorials/en/getting-started.md](./tutorials/en/getting-started.md)
 - Filesystem MCP + SafetyAgent sample: [tutorials/samples/filesystem-mcp-safety.ts](./tutorials/samples/filesystem-mcp-safety.ts)
 - ModelSafetyAgent sample: [tutorials/samples/model-safety-agent.ts](./tutorials/samples/model-safety-agent.ts)
-

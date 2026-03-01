@@ -22,6 +22,18 @@
 - doctor/status/debug の診断I/F拡張
 
 # archive
+- [x] DR-20260301-release-0.1.2: バージョンを 0.1.2 へ更新し、リリース前検証を完了する
+- [x] DR-20260301-provider-model-list-doc-sync: README/README.ja/英日チュートリアル/architecture へ `runtimeApiFailure` とタイムアウト/サフィックス補完の説明を同期する
+- [x] DR-20260301-provider-model-list-failure-reason: `listModels` フォールバック時に `runtimeApiFailure`（失敗理由）を返却する
+- [x] DR-20260301-provider-baseurl-suffix-completion: providerごとの必須 `baseUrl` サフィックス（例: `/v1`, `/v1beta/openai`, `/api/v1`）を不足時に自動補完する
+- [x] DR-20260301-provider-model-list-fallback-timeout: `listModels` のAPI未到達時返却値（configured/default/environment_dependent）を仕様化し、モデル一覧タイムアウト既定値を短時間（2000ms）へ更新する
+- [x] DR-20260301-list-providers-and-runtime-model-list: `listProviderModels` を廃止して `listProviders` を追加し、`listModels` を全Providerの `/models` 取得試行 + 直接指定優先（`.env` > 環境変数）へ更新する
+- [x] DR-20260301-provider-model-list: Providerごとのモデル一覧取得APIを追加し、ollama/lmstudioの環境依存返却を実装する
+- [x] DR-20260301-provider-model-list-api-fetch: ollama/lmstudioでbaseURL解決時にモデル一覧APIを参照し、失敗時は環境変数解決へフォールバックする
+- [x] DR-20260301-provider-model-list-overrides: listProviderModelsでプロバイダー別カテゴリ返却を追加し、providerごとのoverrideオプションを受け付ける
+- [x] DR-20260301-provider-dotenv-priority: Provider設定解決に .env を追加し、直接指定 > .env > 環境変数 の優先順を適用する
+- [x] DR-20260301-tutorial-provider-models: 英日チュートリアルへ listModels/listProviderModels と設定優先順を追記する
+- [x] DR-20260301-release-0.1.1: バージョンを 0.1.1 へ更新し、リリース前検証を完了する
 - [x] concept/spec/architecture の整合を再確認し、MVP（UC-1/UC-2/UC-4）へ固定する
 - [x] spec.md に ERR-ID と戻り型拡張（RunResult optional + extensions）を Given/When/Then で追記する
 - [x] spec.md に Provider 環境変数（OpenAI/Ollama/LM Studio/Gemini/Anthropic/OpenRouter）を反映する

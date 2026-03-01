@@ -1,6 +1,6 @@
 {
   "name": "palpal-core",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "High-safety, OpenAI Agents SDK-compatible TypeScript library with SafetyAgent, Skills, MCP, and Chat Completions providers.",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -33,4 +33,3 @@
     "typescript": "^5.9.3"
   }
 }
-

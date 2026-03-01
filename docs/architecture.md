@@ -49,6 +49,8 @@
 |---|---|---|---|---|
 | `getProvider(providerName?)` | Providerハンドル取得 | `providerName?: "openai" \| "ollama" \| "lmstudio" \| "gemini" \| "anthropic" \| "openrouter"`（未指定時は`AGENTS_MODEL_PROVIDER`） | `ProviderHandle` | `AGENTS-E-PROVIDER-CONFIG`（Model Provider層/設定不足） |
 | `provider.getModel(modelName?)` | 実行モデル取得 | `modelName?: string`（未指定時はProvider既定の環境変数） | `Model` | `AGENTS-E-PROVIDER-CONFIG`（Model Provider層/MODEL未解決） |
+| `listProviders()` | 対応Provider名一覧取得 | なし | `array<ProviderName>` | - |
+| `provider.listModels(options?)` | 単一Providerのモデル一覧取得 | `options?: ProviderModelListOptions`（`baseUrl`/`apiKey`/`model`/`models`/`timeoutMs` と `BASE_URL`/`API_KEY`/`MODEL`/`MODELS`/`TIMEOUT_MS`）。`baseUrl` に provider既定サフィックスが欠ける場合は補完 | `Promise<ProviderModelList>`（`provider`, `models`, `resolution`, `runtimeApiFailure?`）。`GET {baseURL}/models` 失敗時は `configured/default/environment_dependent` へフォールバックし、失敗理由を返却 | - |
 | `run(...)` | 互換モデル実行 | `agent.model` に `provider.getModel(...)` を設定 | `Promise<RunResult>` | `AGENTS-E-COMPAT-UNSUPPORTED`（Model Provider層/互換差異吸収不可） |
 
 #### UC-4: ポリシー運用と監査
@@ -311,7 +313,10 @@
 | `RunOptions` | `extensions?: AgentExtensionsOptions`, `stream?: boolean` | 実行オプション |
 | `AgentRunnerOptions` | `safetyAgent: SafetyAgent`, `policyStore?`, `approvalStore?` | Runner生成設定 |
 | `ProviderName` | `"openai" \| "ollama" \| "lmstudio" \| "gemini" \| "anthropic" \| "openrouter"` | Provider識別子 |
-| `ProviderHandle` | `name: ProviderName`, `getModel(modelName?: string): Model` | Provider抽象ハンドル |
+| `ProviderModelListOptions` | `baseUrl?: string`, `apiKey?: string`, `BASE_URL?: string`, `API_KEY?: string`, `model?: string`, `models?: array<string>`, `MODEL?: string`, `MODELS?: array<string>`, `timeoutMs?: number`, `TIMEOUT_MS?: number` | 単一Providerモデル一覧の入力 |
+| `ProviderModelList` | `provider: ProviderName`, `models: array<string>`, `resolution: "configured"\|"default"\|"environment_dependent"\|"runtime_api"`, `runtimeApiFailure?: ProviderModelListFailure` | Providerモデル一覧 |
+| `ProviderModelListFailure` | `code: "http_error"\|"timeout"\|"network_error"\|"invalid_payload"\|"empty_response"`, `message: string`, `status?: number`, `statusText?: string` | runtime API失敗理由 |
+| `ProviderHandle` | `name: ProviderName`, `getModel(modelName?: string): Model`, `listModels(options?: ProviderModelListOptions): Promise<ProviderModelList>` | Provider抽象ハンドル |
 | `AgentExtensionsOptions` | `policyProfile?: "strict"\|"balanced"\|"fast"`, `requireHumanApproval?: boolean`, `resume?: ResumeOptions`, `toolCalls?: array<RequestedToolCall>`, `maxTurns?: number` | 追加安全オプション |
 | `RunResult` | `run_id: string`, `output_text: string`, `messages: array<InputItem>`, `tool_calls: array<ToolCallResult>`, `usage: UsageStats`, `interruptions?: array<HumanApprovalRequest>`, `extensions?: object` | 実行結果 |
 | `ResumeOptions` | `token: string`, `human_response?: string` | 中断実行再開入力 |
@@ -359,9 +364,11 @@
 | Ollama Base URL | 環境変数 | `AGENTS_OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` |
 | Ollama API Key | 環境変数 | `AGENTS_OLLAMA_API_KEY` | `ollama` |
 | Ollama Model | 環境変数 | `AGENTS_OLLAMA_MODEL` | なし |
+| Ollama Models | 環境変数 | `AGENTS_OLLAMA_MODELS` | なし（`,`/改行区切り） |
 | LM Studio Base URL | 環境変数 | `AGENTS_LMSTUDIO_BASE_URL` | `http://127.0.0.1:1234/v1` |
 | LM Studio API Key | 環境変数 | `AGENTS_LMSTUDIO_API_KEY` | `lmstudio` |
 | LM Studio Model | 環境変数 | `AGENTS_LMSTUDIO_MODEL` | なし |
+| LM Studio Models | 環境変数 | `AGENTS_LMSTUDIO_MODELS` | なし（`,`/改行区切り） |
 | Gemini API Key | 環境変数 | `AGENTS_GEMINI_API_KEY` | なし |
 | Gemini Base URL | 環境変数 | `AGENTS_GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` |
 | Gemini Model | 環境変数 | `AGENTS_GEMINI_MODEL` | `gemini-2.0-flash` |
@@ -376,6 +383,7 @@
 | Policy Profile | 実行オプション | `extensions.policyProfile` | `balanced` |
 | Require Approval | 実行オプション | `extensions.requireHumanApproval` | `false`（Gate判定に従う） |
 | Resume Token TTL | 初期化オプション/環境変数 | `AGENTS_RESUME_TOKEN_TTL_SEC` | `900` |
+| Model List Timeout | 初期化オプション/環境変数 | `AGENTS_MODEL_LIST_TIMEOUT_MS` | `2000` |
 | Request Timeout | 初期化オプション/環境変数 | `AGENTS_REQUEST_TIMEOUT_MS` | `60000` |
 | Log Level | 環境変数 | `AGENTS_LOG_LEVEL` | `info` |
 
@@ -480,4 +488,3 @@ CompatModelProvider -> HttpClient
 
 #13.CLI：コマンド体系／引数／出力／exit code
 該当なし。
-

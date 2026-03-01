@@ -230,9 +230,50 @@ export type SafetyEvaluator = (
   policy: PolicyProfile
 ) => Promise<SafetyAgentDecisionInput> | SafetyAgentDecisionInput;
 
+export type ProviderModelListResolution =
+  | "configured"
+  | "default"
+  | "environment_dependent"
+  | "runtime_api";
+
+export interface ProviderModelList {
+  provider: ProviderName;
+  models: string[];
+  resolution: ProviderModelListResolution;
+  runtimeApiFailure?: ProviderModelListFailure;
+}
+
+export type ProviderModelListFailureCode =
+  | "http_error"
+  | "timeout"
+  | "network_error"
+  | "invalid_payload"
+  | "empty_response";
+
+export interface ProviderModelListFailure {
+  code: ProviderModelListFailureCode;
+  message: string;
+  status?: number;
+  statusText?: string;
+}
+
+export interface ProviderModelListOptions {
+  baseUrl?: string;
+  apiKey?: string;
+  BASE_URL?: string;
+  API_KEY?: string;
+  model?: string;
+  models?: string[];
+  MODEL?: string;
+  MODELS?: string[];
+  timeoutMs?: number;
+  TIMEOUT_MS?: number;
+}
+
 export interface ProviderHandle {
   name: ProviderName;
   getModel(modelName?: string): Model;
+  listModels(options?: ProviderModelListOptions): Promise<ProviderModelList>;
 }
 
 export type SkillMode = "function_tool" | "child_agent";

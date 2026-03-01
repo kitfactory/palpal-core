@@ -13,11 +13,12 @@
 | REQ-0007 | 承認と再開は `approveAndResume` の1段APIでも実行できる | UC-4 |
 | REQ-0008 | `hostedMcpTool` が `requireApproval=true` の場合、実行前に `needs_human` として中断できる | UC-1, UC-4 |
 | REQ-0009 | `ModelSafetyAgent` は model + rubric 入力で構造化判定し、対象Agentの tool/skill/MCP 文脈を使える | UC-1, UC-4 |
+| REQ-0010 | Providerごとの対応モデル一覧をAPIで取得でき、プロバイダー別overrideオプションを受け付ける | UC-3 |
 
 ## [AGENTS-0001] Provider選択
 Given: 実行時に Provider が未指定または指定済み
 When: `getProvider(providerName?)` を呼ぶ
-Done: `providerName` 優先、未指定時は `AGENTS_MODEL_PROVIDER`、未設定時は `openai` を採用する
+Done: `providerName` 優先、未指定時は `.env` の `AGENTS_MODEL_PROVIDER`、次に環境変数 `AGENTS_MODEL_PROVIDER`、未設定時は `openai` を採用する
 
 ## [AGENTS-0002] OpenAI 設定解決
 Given: Provider が `openai`
@@ -59,12 +60,17 @@ Given: `ModelSafetyAgent({ model, rubric })` が設定されている
 When: tool/skill/MCP の実行判定を行う
 Done: 対象Agent由来の capability/tool catalog を入力に含め、`allow|deny|needs_human` の構造化出力で判定できる。既定では `includeUserIntent=false` のため生のユーザー入力は判定プロンプトへ含めない
 
+## [AGENTS-0010] Providerモデル一覧取得
+Given: 利用者がProviderごとのモデル一覧を取得したい
+When: `listProviders()` または `getProvider(provider).listModels(options?)` を呼ぶ
+Done: `listProviders` は対応Provider名配列を返す。`listModels` は `baseUrl/apiKey` と `BASE_URL/API_KEY`（必要なら `model/models/timeoutMs` と `MODEL/MODELS/TIMEOUT_MS`）を受け取り、設定解決順は `直接指定 > .env > 環境変数`。`baseUrl` に provider既定サフィックス（例: Anthropic `/v1`, Gemini `/v1beta/openai`, OpenRouter `/api/v1`）が欠ける場合は自動補完する。各Providerで `GET {baseURL}/models` を試行し、成功時は `runtime_api`、失敗時はフォールバック値（`configured`→`default`→`environment_dependent`）を返し、同時に `runtimeApiFailure` に理由（`code/message/status/statusText`）を含める。失敗コードは `http_error|timeout|network_error|invalid_payload|empty_response`。`listModels` のタイムアウト解決順は `direct > AGENTS_MODEL_LIST_TIMEOUT_MS > AGENTS_REQUEST_TIMEOUT_MS > 2000ms`。
+
 ## Provider環境変数
 | Provider | API Key | Base URL | Model | 追加キー |
 |---|---|---|---|---|
 | openai | `OPENAI_API_KEY` | `OPENAI_BASE_URL`（既定: `https://api.openai.com/v1`） | `AGENTS_OPENAI_MODEL`（既定: `gpt-4.1-mini`） | - |
-| ollama | `AGENTS_OLLAMA_API_KEY`（既定: `ollama`） | `AGENTS_OLLAMA_BASE_URL`（既定: `http://127.0.0.1:11434/v1`） | `AGENTS_OLLAMA_MODEL` | - |
-| lmstudio | `AGENTS_LMSTUDIO_API_KEY`（既定: `lmstudio`） | `AGENTS_LMSTUDIO_BASE_URL`（既定: `http://127.0.0.1:1234/v1`） | `AGENTS_LMSTUDIO_MODEL` | - |
+| ollama | `AGENTS_OLLAMA_API_KEY`（既定: `ollama`） | `AGENTS_OLLAMA_BASE_URL`（既定: `http://127.0.0.1:11434/v1`） | `AGENTS_OLLAMA_MODEL` | `AGENTS_OLLAMA_MODELS`（`,`/改行区切り） |
+| lmstudio | `AGENTS_LMSTUDIO_API_KEY`（既定: `lmstudio`） | `AGENTS_LMSTUDIO_BASE_URL`（既定: `http://127.0.0.1:1234/v1`） | `AGENTS_LMSTUDIO_MODEL` | `AGENTS_LMSTUDIO_MODELS`（`,`/改行区切り） |
 | gemini | `AGENTS_GEMINI_API_KEY` | `AGENTS_GEMINI_BASE_URL`（既定: `https://generativelanguage.googleapis.com/v1beta/openai`） | `AGENTS_GEMINI_MODEL`（既定: `gemini-2.0-flash`） | - |
 | anthropic | `AGENTS_ANTHROPIC_API_KEY` | `AGENTS_ANTHROPIC_BASE_URL`（既定: `https://api.anthropic.com/v1`） | `AGENTS_ANTHROPIC_MODEL` | - |
 | openrouter | `AGENTS_OPENROUTER_API_KEY` | `AGENTS_OPENROUTER_BASE_URL`（既定: `https://openrouter.ai/api/v1`） | `AGENTS_OPENROUTER_MODEL` | `AGENTS_OPENROUTER_HTTP_REFERER`, `AGENTS_OPENROUTER_X_TITLE` |
@@ -73,6 +79,7 @@ Done: 対象Agent由来の capability/tool catalog を入力に含め、`allow|d
 | キー | 用途 | 既定値 |
 |---|---|---|
 | `AGENTS_MODEL_PROVIDER` | Provider選択 | `openai` |
+| `AGENTS_MODEL_LIST_TIMEOUT_MS` | `listModels` の `/models` 取得タイムアウト | `2000` |
 | `AGENTS_REQUEST_TIMEOUT_MS` | リクエストタイムアウト | `60000` |
 
 ## ERR-ID

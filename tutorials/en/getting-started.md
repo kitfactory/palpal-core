@@ -16,6 +16,45 @@ import { getProvider } from "palpal-core";
 const model = getProvider("ollama").getModel("gpt-oss-20b");
 ```
 
+## 2.1 Inspect providers and model lists
+
+```ts
+import { getProvider, listProviders } from "palpal-core";
+
+const providers = listProviders();
+console.log(providers); // ["openai", "ollama", ...]
+
+const openaiModels = await getProvider("openai").listModels({
+  BASE_URL: process.env.OPENAI_BASE_URL,
+  API_KEY: process.env.OPENAI_API_KEY
+});
+console.log(openaiModels.models);
+
+const ollamaModels = await getProvider("ollama").listModels({
+  baseUrl: "http://127.0.0.1:11434/v1",
+  apiKey: "ollama"
+});
+console.log(ollamaModels.models);
+```
+
+Configuration precedence is:
+`direct options > .env > process.env`.
+
+`baseUrl` suffixes are auto-completed per provider when missing
+(for example: Anthropic `/v1`, Gemini `/v1beta/openai`, OpenRouter `/api/v1`).
+
+Model-list timeout precedence is:
+`direct timeout > AGENTS_MODEL_LIST_TIMEOUT_MS > AGENTS_REQUEST_TIMEOUT_MS > 2000ms`.
+
+If model-list API access fails, `listModels` falls back to
+`configured -> default -> environment_dependent` and sets `runtimeApiFailure`:
+
+```ts
+if (openaiModels.resolution !== "runtime_api") {
+  console.log(openaiModels.runtimeApiFailure);
+}
+```
+
 ## 3. Load Skills and convert to tools
 
 ```ts
@@ -120,4 +159,3 @@ For model-based safety evaluation with rubric rules and structured decisions, se
 
 `ModelSafetyAgent` defaults to `includeUserIntent: false`, so raw user input text is not included
 in the safety-judge prompt unless explicitly enabled.
-

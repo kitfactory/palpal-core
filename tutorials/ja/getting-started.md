@@ -16,6 +16,45 @@ import { getProvider } from "palpal-core";
 const model = getProvider("ollama").getModel("gpt-oss-20b");
 ```
 
+## 2.1 Provider一覧とモデル一覧を確認する
+
+```ts
+import { getProvider, listProviders } from "palpal-core";
+
+const providers = listProviders();
+console.log(providers); // ["openai", "ollama", ...]
+
+const openaiModels = await getProvider("openai").listModels({
+  BASE_URL: process.env.OPENAI_BASE_URL,
+  API_KEY: process.env.OPENAI_API_KEY
+});
+console.log(openaiModels.models);
+
+const ollamaModels = await getProvider("ollama").listModels({
+  baseUrl: "http://127.0.0.1:11434/v1",
+  apiKey: "ollama"
+});
+console.log(ollamaModels.models);
+```
+
+設定解決順は次の通りです:
+`直接指定 > .env > 環境変数`
+
+`baseUrl` の provider別サフィックス不足時は自動補完されます
+（例: Anthropic `/v1`、Gemini `/v1beta/openai`、OpenRouter `/api/v1`）。
+
+モデル一覧タイムアウト解決順:
+`直接指定 > AGENTS_MODEL_LIST_TIMEOUT_MS > AGENTS_REQUEST_TIMEOUT_MS > 2000ms`
+
+モデル一覧APIの取得失敗時は `configured -> default -> environment_dependent` にフォールバックし、
+`runtimeApiFailure` に失敗理由が入ります:
+
+```ts
+if (openaiModels.resolution !== "runtime_api") {
+  console.log(openaiModels.runtimeApiFailure);
+}
+```
+
 ## 3. Skills を読み込み Tool 化する
 
 ```ts
@@ -120,4 +159,3 @@ model + rubric で安全判定し、構造化出力で `allow|deny|needs_human` 
 
 `ModelSafetyAgent` は既定で `includeUserIntent: false` です。
 明示的に有効化しない限り、ユーザー入力テキストは判定プロンプトへ含めません。
-

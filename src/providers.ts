@@ -1,20 +1,36 @@
+import fs from "node:fs";
+import path from "node:path";
 import { AgentsError, ensure } from "./errors";
 import {
+  ProviderModelListFailure,
+  ProviderModelListOptions,
   JsonObject,
   Model,
   ModelGenerateRequest,
   ModelGenerateResult,
   ProviderHandle,
+  ProviderModelList,
   ProviderName,
   RequestedToolCall,
   Tool,
   ToolCallResult
 } from "./types";
 
+interface ProviderRuntimeEnv {
+  processEnv: NodeJS.ProcessEnv;
+  dotEnv: Record<string, string>;
+}
+
+interface ProviderRuntimeModelListResult {
+  models: string[];
+  failure?: ProviderModelListFailure;
+}
+
 interface ProviderEnvSpec {
   apiKey: string;
   baseUrl: string;
   model: string;
+  modelList?: string;
   defaultBaseUrl: string;
   defaultModel?: string;
   defaultApiKey?: string;
@@ -54,6 +70,7 @@ const PROVIDER_SPECS: Record<ProviderName, ProviderEnvSpec> = {
     apiKey: "AGENTS_OLLAMA_API_KEY",
     baseUrl: "AGENTS_OLLAMA_BASE_URL",
     model: "AGENTS_OLLAMA_MODEL",
+    modelList: "AGENTS_OLLAMA_MODELS",
     defaultBaseUrl: "http://127.0.0.1:11434/v1",
     defaultApiKey: "ollama",
     requireApiKey: false
@@ -62,6 +79,7 @@ const PROVIDER_SPECS: Record<ProviderName, ProviderEnvSpec> = {
     apiKey: "AGENTS_LMSTUDIO_API_KEY",
     baseUrl: "AGENTS_LMSTUDIO_BASE_URL",
     model: "AGENTS_LMSTUDIO_MODEL",
+    modelList: "AGENTS_LMSTUDIO_MODELS",
     defaultBaseUrl: "http://127.0.0.1:1234/v1",
     defaultApiKey: "lmstudio",
     requireApiKey: false
@@ -89,6 +107,16 @@ const PROVIDER_SPECS: Record<ProviderName, ProviderEnvSpec> = {
     requireApiKey: true
   }
 };
+
+const PROVIDER_NAMES: ProviderName[] = [
+  "openai",
+  "ollama",
+  "lmstudio",
+  "gemini",
+  "anthropic",
+  "openrouter"
+];
+const MODEL_LIST_TIMEOUT_DEFAULT_MS = 2_000;
 
 class CompatChatCompletionModel implements Model {
   public readonly provider: ProviderName;
@@ -173,19 +201,33 @@ class CompatChatCompletionModel implements Model {
 
 class EnvProviderHandle implements ProviderHandle {
   public readonly name: ProviderName;
-  private readonly env: NodeJS.ProcessEnv;
+  private readonly runtimeEnv: ProviderRuntimeEnv;
 
-  public constructor(name: ProviderName, env: NodeJS.ProcessEnv) {
+  public constructor(name: ProviderName, runtimeEnv: ProviderRuntimeEnv) {
     this.name = name;
-    this.env = env;
+    this.runtimeEnv = runtimeEnv;
   }
 
   public getModel(modelName?: string): Model {
     const spec = PROVIDER_SPECS[this.name];
-    const timeoutMs = parseTimeout(this.env.AGENTS_REQUEST_TIMEOUT_MS);
-    const baseUrl = (this.env[spec.baseUrl] ?? spec.defaultBaseUrl).trim();
-    const apiKey = (this.env[spec.apiKey] ?? spec.defaultApiKey ?? "").trim();
-    const resolvedModel = (modelName ?? this.env[spec.model] ?? spec.defaultModel ?? "").trim();
+    const timeoutMs = parseTimeout(
+      readConfigValue("AGENTS_REQUEST_TIMEOUT_MS", this.runtimeEnv)
+    );
+    const baseUrl = applyProviderBaseUrlSuffix(
+      (
+      readConfigValue(spec.baseUrl, this.runtimeEnv) ?? spec.defaultBaseUrl
+      ).trim(),
+      spec
+    );
+    const apiKey = (
+      readConfigValue(spec.apiKey, this.runtimeEnv) ?? spec.defaultApiKey ?? ""
+    ).trim();
+    const resolvedModel = (
+      modelName ??
+      readConfigValue(spec.model, this.runtimeEnv) ??
+      spec.defaultModel ??
+      ""
+    ).trim();
 
     ensure(baseUrl, "AGENTS-E-PROVIDER-CONFIG", `${spec.baseUrl} is required.`);
     ensure(resolvedModel, "AGENTS-E-PROVIDER-CONFIG", `${spec.model} is required.`);
@@ -195,8 +237,14 @@ class EnvProviderHandle implements ProviderHandle {
 
     const headers: Record<string, string> = {};
     if (this.name === "openrouter") {
-      const referer = this.env.AGENTS_OPENROUTER_HTTP_REFERER?.trim();
-      const title = this.env.AGENTS_OPENROUTER_X_TITLE?.trim();
+      const referer = readConfigValue(
+        "AGENTS_OPENROUTER_HTTP_REFERER",
+        this.runtimeEnv
+      )?.trim();
+      const title = readConfigValue(
+        "AGENTS_OPENROUTER_X_TITLE",
+        this.runtimeEnv
+      )?.trim();
       if (referer) {
         headers["HTTP-Referer"] = referer;
       }
@@ -214,10 +262,60 @@ class EnvProviderHandle implements ProviderHandle {
       headers: Object.keys(headers).length > 0 ? headers : undefined
     });
   }
+
+  public async listModels(options?: ProviderModelListOptions): Promise<ProviderModelList> {
+    const resolved = resolveProviderModelListConfig(
+      this.name,
+      this.runtimeEnv,
+      options
+    );
+    const runtimeResult = await fetchProviderModelList({
+      provider: this.name,
+      baseUrl: trimTrailingSlash(resolved.baseUrl),
+      apiKey: resolved.apiKey,
+      timeoutMs: resolved.timeoutMs
+    });
+    const runtimeModels = runtimeResult.models;
+
+    if (runtimeModels.length > 0) {
+      return {
+        provider: this.name,
+        models: runtimeModels,
+        resolution: "runtime_api"
+      };
+    }
+
+    if (resolved.models.length > 0) {
+      return {
+        provider: this.name,
+        models: resolved.models,
+        resolution: "configured",
+        runtimeApiFailure: runtimeResult.failure
+      };
+    }
+
+    if (resolved.defaultModel) {
+      return {
+        provider: this.name,
+        models: [resolved.defaultModel],
+        resolution: "default",
+        runtimeApiFailure: runtimeResult.failure
+      };
+    }
+
+    return {
+      provider: this.name,
+      models: [],
+      resolution: "environment_dependent",
+      runtimeApiFailure: runtimeResult.failure
+    };
+  }
 }
 
 export function getProvider(providerName?: ProviderName): ProviderHandle {
-  const raw = providerName ?? process.env.AGENTS_MODEL_PROVIDER ?? "openai";
+  const runtimeEnv = loadProviderRuntimeEnv(process.env);
+  const raw =
+    providerName ?? readConfigValue("AGENTS_MODEL_PROVIDER", runtimeEnv) ?? "openai";
   const normalized = raw.trim().toLowerCase();
   if (!isProviderName(normalized)) {
     throw new AgentsError(
@@ -226,7 +324,11 @@ export function getProvider(providerName?: ProviderName): ProviderHandle {
     );
   }
 
-  return new EnvProviderHandle(normalized, process.env);
+  return new EnvProviderHandle(normalized, runtimeEnv);
+}
+
+export function listProviders(): ProviderName[] {
+  return [...PROVIDER_NAMES];
 }
 
 function isProviderName(value: string): value is ProviderName {
@@ -240,19 +342,443 @@ function isProviderName(value: string): value is ProviderName {
   );
 }
 
-function parseTimeout(raw: string | undefined): number {
+function parseTimeout(
+  raw: string | undefined,
+  defaults: { fallbackMs: number; minMs: number } = {
+    fallbackMs: 60_000,
+    minMs: 1_000
+  }
+): number {
   if (!raw) {
-    return 60_000;
+    return defaults.fallbackMs;
   }
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 1_000) {
-    return 60_000;
+  if (!Number.isFinite(parsed) || parsed < defaults.minMs) {
+    return defaults.fallbackMs;
   }
   return Math.floor(parsed);
 }
 
+function loadProviderRuntimeEnv(processEnv: NodeJS.ProcessEnv): ProviderRuntimeEnv {
+  return {
+    processEnv,
+    dotEnv: loadDotEnvFile(path.join(process.cwd(), ".env"))
+  };
+}
+
+function readConfigValue(
+  key: string,
+  runtimeEnv: ProviderRuntimeEnv
+): string | undefined {
+  if (Object.prototype.hasOwnProperty.call(runtimeEnv.dotEnv, key)) {
+    return runtimeEnv.dotEnv[key];
+  }
+  return runtimeEnv.processEnv[key];
+}
+
+function resolveListModelsTimeout(
+  timeoutOverride: number | undefined,
+  rawModelListTimeout: string | undefined,
+  rawRequestTimeout: string | undefined
+): number {
+  if (typeof timeoutOverride === "number" && Number.isFinite(timeoutOverride)) {
+    return timeoutOverride >= 200 ? Math.floor(timeoutOverride) : MODEL_LIST_TIMEOUT_DEFAULT_MS;
+  }
+  if (typeof rawModelListTimeout === "string") {
+    return parseTimeout(rawModelListTimeout, {
+      fallbackMs: MODEL_LIST_TIMEOUT_DEFAULT_MS,
+      minMs: 200
+    });
+  }
+  if (typeof rawRequestTimeout === "string") {
+    return parseTimeout(rawRequestTimeout, {
+      fallbackMs: MODEL_LIST_TIMEOUT_DEFAULT_MS,
+      minMs: 200
+    });
+  }
+  return MODEL_LIST_TIMEOUT_DEFAULT_MS;
+}
+
+function resolveProviderModelListConfig(
+  provider: ProviderName,
+  runtimeEnv: ProviderRuntimeEnv,
+  options?: ProviderModelListOptions
+): {
+  baseUrl: string;
+  apiKey: string;
+  timeoutMs: number;
+  models: string[];
+  defaultModel: string;
+} {
+  const spec = PROVIDER_SPECS[provider];
+  const directBaseUrl = readDirectStringOption(options?.baseUrl, options?.BASE_URL);
+  const directApiKey = readDirectStringOption(options?.apiKey, options?.API_KEY);
+  const directTimeoutMs = readDirectNumberOption(
+    options?.timeoutMs,
+    options?.TIMEOUT_MS
+  );
+  const baseUrl = applyProviderBaseUrlSuffix(
+    (
+    directBaseUrl ??
+    readConfigValue(spec.baseUrl, runtimeEnv) ??
+    spec.defaultBaseUrl
+    ).trim(),
+    spec
+  );
+  const apiKey = (
+    directApiKey ??
+    readConfigValue(spec.apiKey, runtimeEnv) ??
+    spec.defaultApiKey ??
+    ""
+  ).trim();
+  const timeoutMs = resolveListModelsTimeout(
+    directTimeoutMs,
+    readConfigValue("AGENTS_MODEL_LIST_TIMEOUT_MS", runtimeEnv),
+    readConfigValue("AGENTS_REQUEST_TIMEOUT_MS", runtimeEnv)
+  );
+  const models = resolveModels(spec, runtimeEnv, options);
+  const defaultModel = (spec.defaultModel ?? "").trim();
+
+  return {
+    baseUrl,
+    apiKey,
+    timeoutMs,
+    models,
+    defaultModel
+  };
+}
+
+function resolveModels(
+  spec: ProviderEnvSpec,
+  runtimeEnv: ProviderRuntimeEnv,
+  options?: ProviderModelListOptions
+): string[] {
+  const directModelsOption = readDirectStringArrayOption(
+    options?.models,
+    options?.MODELS
+  );
+  const directModelOption = readDirectStringOption(options?.model, options?.MODEL);
+  if (Array.isArray(directModelsOption) || typeof directModelOption === "string") {
+    const directModels = [
+      ...normalizeModelNames(directModelsOption ?? []),
+      ...(typeof directModelOption === "string"
+        ? normalizeModelNames([directModelOption])
+        : [])
+    ];
+    return unique(directModels);
+  }
+
+  const models: string[] = [];
+  models.push(...resolveModelsFromConfig(runtimeEnv, spec));
+  const single = readConfigValue(spec.model, runtimeEnv)?.trim() ?? "";
+  if (single) {
+    models.push(single);
+  }
+
+  return unique(models);
+}
+
+function normalizeModelNames(values: string[]): string[] {
+  const models: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) {
+      models.push(trimmed);
+    }
+  }
+  return models;
+}
+
+function resolveModelsFromConfig(
+  runtimeEnv: ProviderRuntimeEnv,
+  spec: ProviderEnvSpec
+): string[] {
+  const raw =
+    (spec.modelList ? readConfigValue(spec.modelList, runtimeEnv) : undefined) ?? "";
+  if (raw.trim().length === 0) {
+    return [];
+  }
+
+  const models: string[] = [];
+  for (const token of raw.split(/[,\n]/)) {
+    const trimmed = token.trim();
+    if (trimmed.length > 0) {
+      models.push(trimmed);
+    }
+  }
+  return unique(models);
+}
+
+async function fetchProviderModelList(options: {
+  provider: ProviderName;
+  baseUrl: string;
+  apiKey: string;
+  timeoutMs: number;
+}): Promise<ProviderRuntimeModelListResult> {
+  if (!options.baseUrl) {
+    return {
+      models: [],
+      failure: {
+        code: "network_error",
+        message: "Model list baseUrl is empty."
+      }
+    };
+  }
+
+  const url = `${options.baseUrl}/models`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: buildHeaders(options.apiKey),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      return {
+        models: [],
+        failure: {
+          code: "http_error",
+          message: `Model list request failed (${response.status} ${response.statusText}).`,
+          status: response.status,
+          statusText: response.statusText
+        }
+      };
+    }
+    const json = await response.json().catch(() => {
+      return undefined;
+    });
+    if (typeof json === "undefined") {
+      return {
+        models: [],
+        failure: {
+          code: "invalid_payload",
+          message: "Model list response is not valid JSON."
+        }
+      };
+    }
+    const models = parseProviderModelNames(json);
+    if (models.length === 0) {
+      return {
+        models: [],
+        failure: {
+          code: "empty_response",
+          message: "Model list response contained no models."
+        }
+      };
+    }
+    return { models };
+  } catch (error) {
+    const maybeError = error as { name?: string };
+    if (maybeError?.name === "AbortError") {
+      return {
+        models: [],
+        failure: {
+          code: "timeout",
+          message: `Model list request timed out after ${options.timeoutMs}ms.`
+        }
+      };
+    }
+    return {
+      models: [],
+      failure: {
+        code: "network_error",
+        message: "Model list request failed due to network/runtime error."
+      }
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseProviderModelNames(raw: unknown): string[] {
+  const names: string[] = [];
+  const payload = toRecord(raw);
+
+  appendModelEntries(names, payload.data);
+  appendModelEntries(names, payload.models);
+
+  return unique(names);
+}
+
+function appendModelEntries(target: string[], value: unknown): void {
+  if (!Array.isArray(value)) {
+    return;
+  }
+
+  for (const entryRaw of value) {
+    if (typeof entryRaw === "string") {
+      if (entryRaw.trim().length > 0) {
+        target.push(entryRaw.trim());
+      }
+      continue;
+    }
+
+    const entry = toRecord(entryRaw);
+    const id = typeof entry.id === "string" ? entry.id.trim() : "";
+    const name = typeof entry.name === "string" ? entry.name.trim() : "";
+    const model = typeof entry.model === "string" ? entry.model.trim() : "";
+
+    if (id) {
+      target.push(id);
+      continue;
+    }
+    if (name) {
+      target.push(name);
+      continue;
+    }
+    if (model) {
+      target.push(model);
+    }
+  }
+}
+
+function loadDotEnvFile(dotEnvPath: string): Record<string, string> {
+  let content = "";
+  try {
+    content = fs.readFileSync(dotEnvPath, "utf8");
+  } catch {
+    return {};
+  }
+
+  const entries: Record<string, string> = {};
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+    const parsed = parseDotEnvLine(line);
+    if (!parsed) {
+      continue;
+    }
+    entries[parsed.key] = parsed.value;
+  }
+  return entries;
+}
+
+function parseDotEnvLine(
+  line: string
+): { key: string; value: string } | undefined {
+  const normalized = line.startsWith("export ") ? line.slice(7).trim() : line;
+  const match = normalized.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+  if (!match) {
+    return undefined;
+  }
+  const key = match[1];
+  const value = parseDotEnvValue(match[2]);
+  return { key, value };
+}
+
+function parseDotEnvValue(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return "";
+  }
+
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    const unquoted = trimmed.slice(1, -1);
+    if (trimmed.startsWith("\"")) {
+      return unquoted
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t")
+        .replace(/\\"/g, "\"")
+        .replace(/\\\\/g, "\\");
+    }
+    return unquoted;
+  }
+  return trimmed;
+}
+
+function readDirectStringOption(
+  primary: string | undefined,
+  alias: string | undefined
+): string | undefined {
+  if (typeof primary === "string") {
+    return primary;
+  }
+  if (typeof alias === "string") {
+    return alias;
+  }
+  return undefined;
+}
+
+function readDirectNumberOption(
+  primary: number | undefined,
+  alias: number | undefined
+): number | undefined {
+  if (typeof primary === "number") {
+    return primary;
+  }
+  if (typeof alias === "number") {
+    return alias;
+  }
+  return undefined;
+}
+
+function readDirectStringArrayOption(
+  primary: string[] | undefined,
+  alias: string[] | undefined
+): string[] | undefined {
+  if (Array.isArray(primary)) {
+    return primary;
+  }
+  if (Array.isArray(alias)) {
+    return alias;
+  }
+  return undefined;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
 function trimTrailingSlash(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+function applyProviderBaseUrlSuffix(
+  rawBaseUrl: string,
+  spec: ProviderEnvSpec
+): string {
+  const trimmedBaseUrl = rawBaseUrl.trim();
+  if (!trimmedBaseUrl) {
+    return trimmedBaseUrl;
+  }
+
+  const requiredSuffix = getRequiredBaseUrlSuffix(spec.defaultBaseUrl);
+  if (!requiredSuffix) {
+    return trimmedBaseUrl;
+  }
+
+  if (hasRequiredSuffix(trimmedBaseUrl, requiredSuffix)) {
+    return trimmedBaseUrl;
+  }
+
+  const merged = `${trimTrailingSlash(trimmedBaseUrl)}${requiredSuffix}`;
+  return merged;
+}
+
+function getRequiredBaseUrlSuffix(defaultBaseUrl: string): string {
+  try {
+    const defaultUrl = new URL(defaultBaseUrl);
+    const pathname = trimTrailingSlash(defaultUrl.pathname);
+    if (!pathname || pathname === "/") {
+      return "";
+    }
+    return pathname.startsWith("/") ? pathname : `/${pathname}`;
+  } catch {
+    return "";
+  }
+}
+
+function hasRequiredSuffix(baseUrl: string, requiredSuffix: string): boolean {
+  const normalizedBase = trimTrailingSlash(baseUrl).toLowerCase();
+  const normalizedSuffix = trimTrailingSlash(requiredSuffix).toLowerCase();
+  return normalizedBase.endsWith(normalizedSuffix);
 }
 
 function buildHeaders(apiKey: string): Record<string, string> {

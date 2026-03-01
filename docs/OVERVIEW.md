@@ -14,6 +14,12 @@
   - MVPの実装優先順序を確定する
   - 実装とテストを1セットで進める実行計画を定義する
   - Chat Completions対応Providerの環境変数仕様を定義する
+  - Providerごとのモデル一覧取得APIを追加する（設定解決順は 直接指定 > .env > 環境変数）
+  - 英日チュートリアルへ Provider一覧/モデル一覧API（listProviders/listModels）の利用例を反映する
+  - Providerモデル一覧API未到達時の返却値と短時間タイムアウト方針を仕様化する
+  - Provider `baseUrl` に必須サフィックスがない場合の自動補完を追加する
+  - Providerモデル一覧API失敗理由を呼び出し側へ返却できるようにする
+  - README/チュートリアルへ `runtimeApiFailure` とタイムアウト/サフィックス補完の利用説明を反映する
 - 非ゴール（やらないこと）:
   - 実装コードの着手
   - ベンダー別の互換性保証範囲の確定

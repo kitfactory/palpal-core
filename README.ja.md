@@ -43,7 +43,29 @@ Agents SDK の使い勝手を保ちながら、MCP / Skills / Tool 実行の実�
   - `listSkills` / `describeSkill` / `toIntrospectionTools`
 - Provider:
   - `getProvider("ollama").getModel("gpt-oss-20b")`
+  - `listProviders()` -> `ProviderName[]`
+  - `await getProvider("ollama").listModels({ baseUrl, apiKey })`
+  - `await getProvider("openai").listModels({ BASE_URL, API_KEY })`
+  - 設定解決順: `直接指定 > .env > 環境変数`
+  - `baseUrl` に provider必須サフィックスが無い場合は自動補完（`/v1`, `/v1beta/openai`, `/api/v1` など）
+  - モデル一覧タイムアウト解決順: `直接指定 > AGENTS_MODEL_LIST_TIMEOUT_MS > AGENTS_REQUEST_TIMEOUT_MS > 2000ms`
+  - `/models` 到達失敗時: `configured` -> `default` -> `environment_dependent` の順でフォールバック
+  - フォールバック返却には `runtimeApiFailure`（`code/message/status/statusText`）を含める
   - OpenAI / Ollama / LM Studio / Gemini / Anthropic / OpenRouter
+
+モデル一覧の診断例:
+
+```ts
+const modelList = await getProvider("anthropic").listModels({
+  baseUrl: "https://api.anthropic.com", // サフィックス(/v1)は自動補完
+  apiKey: process.env.AGENTS_ANTHROPIC_API_KEY
+});
+
+if (modelList.resolution !== "runtime_api") {
+  console.warn(modelList.runtimeApiFailure);
+  // { code: "http_error" | "timeout" | ..., message, status?, statusText? }
+}
+```
 
 ## インストール
 
@@ -111,4 +133,3 @@ const result = await runner.run(agent, "hello", {
 - 英語: [tutorials/en/getting-started.md](./tutorials/en/getting-started.md)
 - Filesystem MCP + SafetyAgent サンプル: [tutorials/samples/filesystem-mcp-safety.ts](./tutorials/samples/filesystem-mcp-safety.ts)
 - ModelSafetyAgent サンプル: [tutorials/samples/model-safety-agent.ts](./tutorials/samples/model-safety-agent.ts)
-
